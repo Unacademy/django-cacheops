@@ -1,16 +1,19 @@
 from __future__ import absolute_import
+
+import random
+import sys
+import traceback
 import warnings
 from contextlib import contextmanager
-import six
 
+import redis
+import six
 from django.core.exceptions import ImproperlyConfigured
 from django.utils.module_loading import import_string
-
 from funcy import decorator, identity, memoize, LazyObject
-import redis
 from redis.sentinel import Sentinel
-from .conf import settings
 
+from .conf import settings
 
 if settings.CACHEOPS_DEGRADE_ON_FAILURE:
     @decorator
@@ -21,16 +24,65 @@ if settings.CACHEOPS_DEGRADE_ON_FAILURE:
             warnings.warn("The cacheops cache is unreachable! Error: %s" % e, RuntimeWarning)
         except redis.TimeoutError as e:
             warnings.warn("The cacheops cache timed out! Error: %s" % e, RuntimeWarning)
+        except Exception as e:
+            warnings.warn("".join(traceback.format_exception(*sys.exc_info())))
 else:
     handle_connection_failure = identity
-
 
 LOCK_TIMEOUT = 60
 
 
-class CacheopsRedis(redis.StrictRedis):
+class SafeRedis(redis.StrictRedis):
     get = handle_connection_failure(redis.StrictRedis.get)
+    """ Handles failover of AWS elasticache
+    """
 
+    def execute_command(self, *args, **options):
+        try:
+            return super(SafeRedis, self).execute_command(*args, **options)
+        except redis.ResponseError as e:
+            if "READONLY" not in e.message:
+                raise
+            connection = self.connection_pool.get_connection(args[0], **options)
+            connection.disconnect()
+            warnings.warn("Primary probably failed over, reconnecting")
+            return super(SafeRedis, self).execute_command(*args, **options)
+
+
+# CacheopsRedis = SafeRedis
+
+redis_replicas = None
+try:
+    # the conf could be a list of string
+    # list would look like: ["redis://cache-001:6379/1", "redis://cache-002:6379/2"]
+    # string would be: "redis://cache-001:6379/1,redis://cache-002:6379/2"
+    redis_replica_conf = settings.CACHEOPS_REDIS_REPLICA
+    if redis_replica_conf:
+        if isinstance(redis_replica_conf, six.string_types):
+            redis_replicas = map(redis.StrictRedis.from_url, redis_replica_conf.split(','))
+        else:
+            redis_replicas = []
+            for replica in redis_replica_conf:
+                redis_replicas.append(redis.StrictRedis(**replica))
+except AttributeError as err:
+    pass
+
+
+class CacheopsRedis(SafeRedis):
+    super_get = handle_connection_failure(SafeRedis.get)
+
+    def get(self, *args, **kwargs):
+        if redis_replicas:
+            try:
+                redis_replica = random.choice(redis_replicas)
+                return redis_replica.get(*args, **kwargs)
+            except redis.ConnectionError:
+                pass
+        return self.super_get(*args, **kwargs)
+
+    def get_from_main(self, *args, **kwargs):
+        return self.super_get(*args, **kwargs)
+        
     @contextmanager
     def getting(self, key, lock=False):
         if not lock:
@@ -55,15 +107,20 @@ class CacheopsRedis(redis.StrictRedis):
             return locked
         """))
         signal_key = key + ':signal'
-
+        from_main = False
         while True:
-            data = self.get(key)
+            if from_main:
+                data = self.get_from_main(key)
+            else:
+                data = self.get(key)
             if data is None:
                 if self._lock(keys=[key, signal_key], args=[LOCK_TIMEOUT]):
                     return None
             elif data != b'LOCK':
                 return data
-
+            if not from_main:
+                from_main = True
+                continue
             # No data and not locked, wait
             self.brpoplpush(signal_key, signal_key, timeout=LOCK_TIMEOUT)
 
@@ -114,6 +171,7 @@ import re
 import os.path
 
 STRIP_RE = re.compile(r'TOSTRIP.*/TOSTRIP', re.S)
+
 
 @memoize
 def load_script(name, strip=False):
