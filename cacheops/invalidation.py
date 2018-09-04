@@ -9,17 +9,18 @@ from distutils.version import StrictVersion
 from .conf import settings
 from .utils import NOT_SERIALIZED_FIELDS
 from .sharding import get_prefix
-from .redis import redis_client, handle_connection_failure, load_script
+from .redis import redis_client, handle_connection_failure, load_script, use_hash_keys, use_gevent, max_invalidation, \
+    script_timeout
 from .signals import cache_invalidated
 from .transaction import queue_when_in_transaction
-
 
 __all__ = ('invalidate_obj', 'invalidate_model', 'invalidate_all', 'no_invalidation')
 
 
 @memoize
 def redis_can_unlink():
-    redis_version = redis_client.info()['redis_version']
+    # TODO please fix
+    redis_version = '4.0'  # redis_client.info()['redis_version']
     return StrictVersion(redis_version) >= StrictVersion('4.0')
 
 
@@ -30,10 +31,30 @@ def invalidate_dict(model, obj_dict, using=DEFAULT_DB_ALIAS):
         return
     model = model._meta.concrete_model
     prefix = get_prefix(_cond_dnfs=[(model._meta.db_table, list(obj_dict.items()))], dbs=[using])
-    load_script('invalidate', strip=redis_can_unlink())(keys=[prefix], args=[
-        model._meta.db_table,
-        json.dumps(obj_dict, default=str)
-    ])
+    if use_hash_keys:
+        if use_gevent:
+            import gevent
+            jobs = [gevent.spawn(
+                lambda key: load_script('invalidate', strip=redis_can_unlink())(
+                    keys=[redis_client._local_hash_key_cache[key]], args=[
+                        model._meta.db_table,
+                        json.dumps(obj_dict, default=str),
+                        script_timeout, max_invalidation
+                    ]), key) for key in redis_client._local_hash_key_cache]
+            gevent.wait(jobs)
+        else:
+            for key in redis_client._local_hash_key_cache:
+                load_script('invalidate', strip=redis_can_unlink())(keys=[redis_client._local_hash_key_cache[key]],
+                                                                    args=[
+                                                                        model._meta.db_table,
+                                                                        json.dumps(obj_dict, default=str),
+                                                                        script_timeout, max_invalidation
+                                                                    ])
+    else:
+        load_script('invalidate', strip=redis_can_unlink())(keys=[prefix], args=[
+            model._meta.db_table,
+            json.dumps(obj_dict, default=str), script_timeout, max_invalidation
+        ])
     cache_invalidated.send(sender=model, obj_dict=obj_dict)
 
 
@@ -82,6 +103,7 @@ class InvalidationState(threading.local):
     def __init__(self):
         self.depth = 0
 
+
 class _no_invalidation(ContextDecorator):
     state = InvalidationState()
 
@@ -95,6 +117,7 @@ class _no_invalidation(ContextDecorator):
     def active(self):
         return self.state.depth
 
+
 no_invalidation = _no_invalidation()
 
 
@@ -103,7 +126,8 @@ no_invalidation = _no_invalidation()
 @memoize
 def serializable_fields(model):
     return tuple(f for f in model._meta.fields
-                   if not isinstance(f, NOT_SERIALIZED_FIELDS))
+                 if not isinstance(f, NOT_SERIALIZED_FIELDS))
+
 
 @post_processing(dict)
 def get_obj_dict(model, obj):
