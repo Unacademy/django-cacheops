@@ -3,7 +3,10 @@ local key = KEYS[2]
 local data = ARGV[1]
 local dnfs = cjson.decode(ARGV[2])
 local timeout = tonumber(ARGV[3])
-
+local script_timeout = tonumber(ARGV[4])
+redis.replicate_commands()
+local current_time = redis.call('TIME')
+local st = current_time[1]*1000000+current_time[2]
 
 -- Write data to cache
 redis.call('setex', key, timeout, data)
@@ -34,6 +37,10 @@ end
 for db_table, disj in pairs(dnfs) do
     for _, conj in ipairs(disj) do
         -- Ensure scheme is known
+        local current_time = redis.call('TIME')
+        if current_time[1]*1000000+current_time[2]-st > script_timeout then
+                return redis.error_reply('timeout' .. current_time[1]*1000000+current_time[2]-st .. prefix .. key ..data)
+        end
         redis.call('sadd', prefix .. 'schemes:' .. db_table, conj_schema(conj))
 
         -- Add new cache_key to list of dependencies
