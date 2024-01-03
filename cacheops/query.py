@@ -8,12 +8,12 @@ from funcy.py3 import lmap, map, lcat, join_with
 from .cross import pickle, md5
 
 import django
-from django.utils.encoding import smart_str, force_text
+from django.utils.encoding import smart_str, force_str
 from django.core.exceptions import ImproperlyConfigured
 from django.db import DEFAULT_DB_ALIAS
 from django.db.models import Manager, Model
 from django.db.models.query import QuerySet
-from django.db.models.sql.datastructures import EmptyResultSet
+from django.core.exceptions import EmptyResultSet
 from django.db.models.signals import pre_save, post_save, post_delete, m2m_changed
 
 from .conf import model_profile, settings, ALL_OPS
@@ -182,7 +182,7 @@ class QuerySetMixin(object):
             try:
                 sql_str = sql % params
             except UnicodeDecodeError:
-                sql_str = sql % walk(force_text, params)
+                sql_str = sql % walk(force_str, params)
             md.update(smart_str(sql_str))
         except EmptyResultSet:
             pass
@@ -338,7 +338,7 @@ class QuerySetMixin(object):
                         self._result_cache = _data
                         cache_data_not_found = False
                     except Exception as e:
-                        print e.message
+                        print(e.message)
                         # from django.conf import settings as base_settings
                         #
                         # from raven import Client
