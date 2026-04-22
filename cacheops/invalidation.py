@@ -4,7 +4,7 @@ import threading
 from funcy import memoize, post_processing, ContextDecorator
 from django.db import DEFAULT_DB_ALIAS
 from django.db.models.expressions import F, Expression
-from distutils.version import StrictVersion
+from packaging.version import Version as StrictVersion
 
 from .conf import settings
 from .utils import NOT_SERIALIZED_FIELDS
@@ -15,8 +15,7 @@ from .signals import cache_invalidated
 from .transaction import queue_when_in_transaction
 from .local_cache import RequestLocalCacheObj
 import logging
-from datetime import datetime
-import pytz
+from datetime import datetime, timezone
 
 __all__ = ('invalidate_obj', 'invalidate_model', 'invalidate_all', 'no_invalidation')
 
@@ -65,7 +64,7 @@ def invalidate_dict(model, obj_dict, using=DEFAULT_DB_ALIAS):
     except Exception as e:
         if settings.CACHEOPS_LOGGING:
             cacheops_logger = logging.getLogger('cacheops.log')
-            cacheops_logger.info({"time": datetime.utcnow().replace(tzinfo=pytz.UTC), "error": e})
+            cacheops_logger.info({"time": datetime.now(timezone.utc), "error": e})
         raise e
 
 

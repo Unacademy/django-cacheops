@@ -10,7 +10,7 @@ README = open('README.rst').read()    \
 
 setup(
     name='django-cacheops',
-    version='4.1.15',
+    version='4.1.16',
     author='Alexander Schepanovski',
     author_email='suor.web@gmail.com',
 
@@ -31,6 +31,7 @@ setup(
         'funcy>=1.8,<2.0',
         'six>=1.4.0',
         'raven==6.4.0',
+        'packaging',
     ],
     classifiers=[
         'Development Status :: 5 - Production/Stable',
@@ -44,6 +45,12 @@ setup(
         'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
         'Framework :: Django',
         'Framework :: Django :: 1.8',
         'Framework :: Django :: 1.9',

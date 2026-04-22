@@ -47,7 +47,7 @@ class SafeRedisCluster(StrictRedisCluster):
         try:
             return super(SafeRedisCluster, self).execute_command(*args, **options)
         except redis.ResponseError as e:
-            if "READONLY" not in e.message:
+            if "READONLY" not in str(e):
                 raise
             connection = self.connection_pool.get_connection(args[0], **options)
             connection.disconnect()
@@ -76,7 +76,7 @@ class SafeRedisNormal(redis.StrictRedis):
         try:
             return super(SafeRedisNormal, self).execute_command(*args, **options)
         except redis.ResponseError as e:
-            if "READONLY" not in e.message:
+            if "READONLY" not in str(e):
                 raise
             connection = self.connection_pool.get_connection(args[0], **options)
             connection.disconnect()
