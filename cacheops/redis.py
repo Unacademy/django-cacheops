@@ -10,7 +10,7 @@ from funcy import decorator, identity, memoize, LazyObject
 import redis
 from redis.sentinel import Sentinel
 from .conf import settings
-from rediscluster import StrictRedisCluster
+from redis.cluster import RedisCluster, ClusterNode
 
 if settings.CACHEOPS_DEGRADE_ON_FAILURE:
     @decorator
@@ -27,8 +27,8 @@ else:
 LOCK_TIMEOUT = 60
 
 
-class SafeRedisCluster(StrictRedisCluster):
-    get = handle_connection_failure(StrictRedisCluster.get)
+class SafeRedisCluster(RedisCluster):
+    get = handle_connection_failure(RedisCluster.get)
     _local_hash_key_cache = {}
     _cluster_state = None
 
@@ -37,11 +37,11 @@ class SafeRedisCluster(StrictRedisCluster):
         self.build_local_hash_key_cache()
 
     def get_hashed_key(self, cache_key):
-        if id(self.connection_pool.nodes.nodes) != self._cluster_state:
+        current_state = frozenset(n.name for n in self.get_primaries())
+        if current_state != self._cluster_state:
             self.build_local_hash_key_cache()
-        node_name = self.connection_pool.nodes.node_from_slot(self.connection_pool.nodes.keyslot(hash(cache_key)))[
-            "name"]
-        return self._local_hash_key_cache[node_name]
+        node = self.get_node_from_slot(self.keyslot(hash(cache_key)))
+        return self._local_hash_key_cache[node.name]
 
     def execute_command(self, *args, **options):
         try:
@@ -49,22 +49,17 @@ class SafeRedisCluster(StrictRedisCluster):
         except redis.ResponseError as e:
             if "READONLY" not in str(e):
                 raise
-            connection = self.connection_pool.get_connection(args[0], **options)
-            connection.disconnect()
             warnings.warn("Primary probably failed over, reconnecting")
             return super(SafeRedisCluster, self).execute_command(*args, **options)
 
     def build_local_hash_key_cache(self):
         hash_key = 0
-        master_nodes = list(
-            node for node in self.connection_pool.nodes.nodes.values() if node["server_type"] == "master")
+        master_nodes = self.get_primaries()
         while len(self._local_hash_key_cache) < len(master_nodes):
-            node = self.connection_pool.nodes.node_from_slot(
-                self.connection_pool.nodes.keyslot(str(hash_key)))
-            self._local_hash_key_cache[node["name"]] = "{%s}" % str(hash_key)
+            node = self.get_node_from_slot(self.keyslot(str(hash_key)))
+            self._local_hash_key_cache[node.name] = "{%s}" % str(hash_key)
             hash_key += 1
-
-        self._cluster_state = id(self.connection_pool.nodes.nodes)
+        self._cluster_state = frozenset(n.name for n in self.get_primaries())
 
 
 class SafeRedisNormal(redis.StrictRedis):
@@ -85,7 +80,9 @@ class SafeRedisNormal(redis.StrictRedis):
 
 
 redis_conf = settings.CACHEOPS_REDIS
-if redis_conf and 'startup_nodes' in redis_conf:
+_is_cluster = isinstance(redis_conf, RedisCluster) or \
+    (isinstance(redis_conf, dict) and 'startup_nodes' in redis_conf)
+if _is_cluster:
     SafeRedis = SafeRedisCluster
 else:
     SafeRedis = SafeRedisNormal
@@ -166,6 +163,10 @@ def redis_client():
             socket_timeout=settings.CACHEOPS_SENTINEL.get('socket_timeout')
         )
 
+    # Pre-built RedisCluster instance passed directly.
+    if isinstance(settings.CACHEOPS_REDIS, RedisCluster):
+        return settings.CACHEOPS_REDIS
+
     # Allow client connection settings to be specified by a URL.
     if isinstance(settings.CACHEOPS_REDIS, six.string_types):
         return client_class.from_url(settings.CACHEOPS_REDIS)
@@ -173,7 +174,7 @@ def redis_client():
         return client_class(**settings.CACHEOPS_REDIS)
 
 
-use_hash_keys = redis_conf and 'startup_nodes' in redis_conf
+use_hash_keys = _is_cluster
 use_gevent = settings.CACHEOPS_USE_GEVENT
 script_timeout = settings.CACHEOPS_SCRIPT_TIMEOUT
 max_invalidation = settings.CACHEOPS_MAX_INVALIDATION
