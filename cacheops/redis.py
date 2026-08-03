@@ -110,7 +110,7 @@ class CacheopsRedis(SafeRedis):
 
     @handle_connection_failure
     def _get_or_lock(self, key):
-        self._lock = getattr(self, '_lock', self.register_script("""
+        self._lock_script = getattr(self, '_lock_script', self.register_script("""
             local locked = redis.call('set', KEYS[1], 'LOCK', 'nx', 'ex', ARGV[1])
             if locked then
                 redis.call('del', KEYS[2])
@@ -121,7 +121,7 @@ class CacheopsRedis(SafeRedis):
         while True:
             data = self.get(key)
             if data is None:
-                if self._lock(keys=[key, signal_key], args=[LOCK_TIMEOUT]):
+                if self._lock_script(keys=[key, signal_key], args=[LOCK_TIMEOUT]):
                     return None
             elif data != b'LOCK':
                 return data
@@ -131,7 +131,7 @@ class CacheopsRedis(SafeRedis):
 
     @handle_connection_failure
     def _release_lock(self, key):
-        self._unlock = getattr(self, '_unlock', self.register_script("""
+        self._unlock_script = getattr(self, '_unlock_script', self.register_script("""
             if redis.call('get', KEYS[1]) == 'LOCK' then
                 redis.call('del', KEYS[1])
             end
@@ -139,7 +139,7 @@ class CacheopsRedis(SafeRedis):
             redis.call('expire', KEYS[2], 1)
         """))
         signal_key = key + ':signal'
-        self._unlock(keys=[key, signal_key])
+        self._unlock_script(keys=[key, signal_key])
 
 
 @LazyObject
