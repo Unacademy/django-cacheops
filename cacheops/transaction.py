@@ -89,8 +89,11 @@ class AtomicMixIn(object):
 
 
 class CursorWrapperMixin(object):
-    def callproc(self, procname, params=None):
-        result = self._no_monkey.callproc(self, procname, params)
+    def callproc(self, procname, params=None, kparams=None):
+        if kparams is not None:
+            result = self._no_monkey.callproc(self, procname, params, kparams)
+        else:
+            result = self._no_monkey.callproc(self, procname, params)
         if transaction_states[self.db.alias]:
             transaction_states[self.db.alias].mark_dirty()
         return result

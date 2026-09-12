@@ -338,7 +338,7 @@ class QuerySetMixin(object):
                         self._result_cache = _data
                         cache_data_not_found = False
                     except Exception as e:
-                        print(e.message)
+                        print(str(e))
                         # from django.conf import settings as base_settings
                         #
                         # from raven import Client
@@ -439,8 +439,8 @@ class QuerySetMixin(object):
         else:
             return self._no_monkey.exists(self)
 
-    def bulk_create(self, objs, batch_size=None):
-        objs = self._no_monkey.bulk_create(self, objs, batch_size=batch_size)
+    def bulk_create(self, objs, batch_size=None, **kwargs):
+        objs = self._no_monkey.bulk_create(self, objs, batch_size=batch_size, **kwargs)
         if family_has_profile(self.model):
             for obj in objs:
                 invalidate_obj(obj, using=self.db)
