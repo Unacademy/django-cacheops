@@ -125,7 +125,7 @@ class RedisCache(BaseCache):
 
     @handle_connection_failure
     def set(self, cache_key, data, timeout=None):
-        pickled_data = pickle.dumps(data, -1)
+        pickled_data = pickle.dumps(data, 2)
         if timeout is not None:
             self.conn.setex(cache_key, timeout, pickled_data)
             val = {CacheLocalObj.CachedData: data, CacheLocalObj.Expiry: timeout + int(time.time())}

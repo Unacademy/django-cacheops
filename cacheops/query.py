@@ -42,7 +42,7 @@ def cache_thing(prefix, cache_key, data, cond_dnfs, timeout, dbs=()):
     load_script('cache_thing', settings.CACHEOPS_LRU)(
         keys=[prefix, cache_key],
         args=[
-            pickle.dumps(data, -1),
+            pickle.dumps(data, 2),
             json.dumps(cond_dnfs, default=str),
             timeout,
             script_timeout
