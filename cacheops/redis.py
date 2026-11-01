@@ -36,11 +36,14 @@ class SafeRedisCluster(RedisCluster):
         super(SafeRedisCluster, self).__init__(*args, **kwargs)
         self.build_local_hash_key_cache()
 
-    def get_hashed_key(self, cache_key):
+    def refresh_hash_keys_if_needed(self):
         current_state = frozenset(n.name for n in self.get_primaries())
         if current_state != self._cluster_state:
             self.build_local_hash_key_cache()
-        node = self.nodes_manager.get_node_from_slot(self.keyslot(hash(cache_key)))
+
+    def get_hashed_key(self, cache_key):
+        self.refresh_hash_keys_if_needed()
+        node = self.nodes_manager.get_node_from_slot(self.keyslot(cache_key))
         return self._local_hash_key_cache[node.name]
 
     def execute_command(self, *args, **options):
@@ -54,12 +57,14 @@ class SafeRedisCluster(RedisCluster):
 
     def build_local_hash_key_cache(self):
         hash_key = 0
+        hash_key_cache = {}
         master_nodes = self.get_primaries()
-        while len(self._local_hash_key_cache) < len(master_nodes):
+        while len(hash_key_cache) < len(master_nodes):
             node = self.nodes_manager.get_node_from_slot(self.keyslot(str(hash_key)))
-            self._local_hash_key_cache[node.name] = "{%s}" % str(hash_key)
+            hash_key_cache[node.name] = "{%s}" % str(hash_key)
             hash_key += 1
-        self._cluster_state = frozenset(n.name for n in self.get_primaries())
+        self._local_hash_key_cache = hash_key_cache
+        self._cluster_state = frozenset(n.name for n in master_nodes)
 
 
 class SafeRedisNormal(redis.StrictRedis):
