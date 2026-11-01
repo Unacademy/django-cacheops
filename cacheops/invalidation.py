@@ -37,19 +37,22 @@ def invalidate_dict(model, obj_dict, using=DEFAULT_DB_ALIAS):
         model = model._meta.concrete_model
         prefix = get_prefix(_cond_dnfs=[(model._meta.db_table, list(obj_dict.items()))], dbs=[using])
         if use_hash_keys:
+            redis_client.refresh_hash_keys_if_needed()
+            # The cache dict is replaced on rebuild, so iterate over a single snapshot of it
+            hash_keys = list(redis_client._local_hash_key_cache.values())
             if use_gevent:
                 import gevent
                 jobs = [gevent.spawn(
                     lambda key: load_script('invalidate', strip=redis_can_unlink())(
-                        keys=[redis_client._local_hash_key_cache[key]], args=[
+                        keys=[key], args=[
                             model._meta.db_table,
                             json.dumps(obj_dict, default=str),
                             script_timeout, max_invalidation
-                        ]), key) for key in redis_client._local_hash_key_cache]
+                        ]), key) for key in hash_keys]
                 gevent.wait(jobs)
             else:
-                for key in redis_client._local_hash_key_cache:
-                    load_script('invalidate', strip=redis_can_unlink())(keys=[redis_client._local_hash_key_cache[key]],
+                for key in hash_keys:
+                    load_script('invalidate', strip=redis_can_unlink())(keys=[key],
                                                                         args=[
                                                                             model._meta.db_table,
                                                                             json.dumps(obj_dict, default=str),
